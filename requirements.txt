@@ -1,0 +1,7 @@
+pandas
+seaborn
+matplotlib
+numpy
+colorama
+cupy==12.*
+torch
