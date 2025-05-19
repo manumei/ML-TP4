@@ -168,7 +168,7 @@ def maximization(X, gamma):
 def run_gaussian_mixture(X, k, means, covs, weights, max_iters, rtol, atol):
     ''' Para que el jupyter quede mas limpio, llama directamente a las funcion es de ExpMax'''
     
-    for i in trange(max_iters, desc="GMM K={ka}", unit="iter"):
+    for i in trange(max_iters, desc=f"GMM K={k}", unit="iter"):
         gamma = expectation(X, means, covs, weights)
         prev_means, prev_covs, prev_weights = means.copy(), covs.copy(), weights.copy()
         means, covs, weights = maximization(X, gamma)
