@@ -4,6 +4,31 @@ import time
 from tqdm import trange
 from colorama import Fore, Style
 
+# para plotear las gaussianas
+from matplotlib.patches import Ellipse
+import matplotlib.transforms as transforms
+
+def draw_ellipse(mean, cov, ax, color):
+    ''' matplotlib magic para dibujar una elipse aparentemente '''
+    
+    if cov.shape != (2, 2):
+        return # solo 2d
+
+    vals, vecs = np.linalg.eigh(cov)
+    order = vals.argsort()[::-1]
+    vals, vecs = vals[order], vecs[:, order]
+
+    theta = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
+    width, height = 2 * np.sqrt(vals)
+    
+    ellipse = Ellipse(xy=mean, width=width, height=height, angle=theta,
+                    edgecolor=color, fc='none', lw=2, zorder=3)
+
+    ax.add_patch(ellipse)
+
+def has_converged(new, old, rtol, atol):
+    return cp.allclose(new, old, rtol=rtol, atol=atol)
+
 def compute_L(X, labels, centroids):
     ''' 
     Suma de distancias (L) de cada punto a su centroide (distancia euclidiana) 
@@ -17,6 +42,17 @@ def compute_L(X, labels, centroids):
     '''
     # mucho texto, numpy magic (o cupy en este caso)
     return cp.sum(cp.linalg.norm(X - centroids[labels], axis=1)).item()
+
+def compute_gmm_L(X, cluster_assignments, means):
+    ''' mismo concepto que antes, no hace falta repetir'''
+    L = 0.0
+    for k in range(means.shape[0]):
+        cluster_points = X[cluster_assignments == k]
+        if cluster_points.shape[0] > 0:
+            dists = cp.linalg.norm(cluster_points - means[k], axis=1)
+            L += cp.sum(dists)
+    return float(L)
+
 
 def kmeans(X, K, max_iters, rel_tol, abs_tol):
     """K-means clustering on dataset (cupy for GPU)
@@ -81,3 +117,71 @@ def kmeans(X, K, max_iters, rel_tol, abs_tol):
         centroids = new_centroids
 
     return labels, centroids
+
+def gaussian_pdf(x, mean, cov):
+    ''' Probability Density Function para Gaussiana '''
+    D = x.shape[1]
+    cov_det = cp.linalg.det(cov)
+    cov_inv = cp.linalg.inv(cov)
+    norm_const = 1.0 / cp.sqrt((2 * cp.pi)**D * cov_det)
+    x_centered = x - mean
+    exponent = -0.5 * cp.sum(x_centered @ cov_inv * x_centered, axis=1)
+    return norm_const * cp.exp(exponent)
+
+def initialize_gmm(X, K, centroids):
+    ''' Empieza el GMM con los que ya hice del K means '''
+    N, D = X.shape
+    means = centroids
+    covs = cp.array([cp.cov(X.T) + cp.eye(D)*1e-6 for _ in range(K)])
+    weights = cp.ones(K) / K
+    return means, covs, weights
+
+def expectation(X, means, covs, weights):
+    ''' Hace la parte de Expectation de Expectation-Maximization (el γ_ik)'''
+    N, K = X.shape[0], means.shape[0]
+    gamma = cp.zeros((N, K))
+
+    for k in range(K):
+        gamma[:, k] = weights[k] * gaussian_pdf(X, means[k], covs[k])
+
+    gamma_sum = cp.sum(gamma, axis=1, keepdims=True)
+    gamma /= gamma_sum
+    return gamma
+
+def maximization(X, gamma):
+    ''' Maximiza los parametros (μ_k, Σ_k y π_k) '''
+    N, D = X.shape
+    K = gamma.shape[1]
+
+    N_k = cp.sum(gamma, axis=0)
+    weights = N_k / N
+    means = cp.dot(gamma.T, X) / N_k[:, cp.newaxis]
+
+    covs = cp.zeros((K, D, D))
+    for k in range(K):
+        X_centered = X - means[k]
+        covs[k] = (gamma[:, k][:, None] * X_centered).T @ X_centered / N_k[k]
+        covs[k] += cp.eye(D) * 1e-6  # For numerical stability
+
+    return means, covs, weights
+
+def run_gaussian_mixture(X, k, means, covs, weights, max_iters, rtol, atol):
+    ''' Para que el jupyter quede mas limpio, llama directamente a las funcion es de ExpMax'''
+    
+    for i in trange(max_iters, desc="GMM K={ka}", unit="iter"):
+        gamma = expectation(X, means, covs, weights)
+        prev_means, prev_covs, prev_weights = means.copy(), covs.copy(), weights.copy()
+        means, covs, weights = maximization(X, gamma)
+
+        if has_converged(means, prev_means, rtol, atol) and \
+        has_converged(covs, prev_covs, rtol, atol) and \
+        has_converged(weights, prev_weights, rtol, atol):
+            break
+
+    return gamma, means, covs, weights
+
+
+def has_converged(new, old, rtol, atol):
+    return cp.allclose(new, old, rtol=rtol, atol=atol)
+
+
