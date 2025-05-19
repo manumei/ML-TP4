@@ -10,10 +10,6 @@ import matplotlib.transforms as transforms
 
 def draw_ellipse(mean, cov, ax, color):
     ''' matplotlib magic para dibujar una elipse aparentemente '''
-    
-    if cov.shape != (2, 2):
-        return # solo 2d
-
     vals, vecs = np.linalg.eigh(cov)
     order = vals.argsort()[::-1]
     vals, vecs = vals[order], vecs[:, order]
