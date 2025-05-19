@@ -43,15 +43,15 @@ def compute_L(X, labels, centroids):
     # mucho texto, numpy magic (o cupy en este caso)
     return cp.sum(cp.linalg.norm(X - centroids[labels], axis=1)).item()
 
-def compute_gmm_L(X, cluster_assignments, means):
-    ''' mismo concepto que antes, no hace falta repetir'''
-    L = 0.0
-    for k in range(means.shape[0]):
-        cluster_points = X[cluster_assignments == k]
-        if cluster_points.shape[0] > 0:
-            dists = cp.linalg.norm(cluster_points - means[k], axis=1)
-            L += cp.sum(dists)
-    return float(L)
+# def compute_gmm_L(X, cluster_assignments, means):
+#     ''' mismo concepto que antes, no hace falta repetir'''
+#     L = 0.0
+#     for k in range(means.shape[0]):
+#         cluster_points = X[cluster_assignments == k]
+#         if cluster_points.shape[0] > 0:
+#             dists = cp.linalg.norm(cluster_points - means[k], axis=1)
+#             L += cp.sum(dists)
+#     return float(L)
 
 
 def kmeans(X, K, max_iters, rel_tol, abs_tol):
