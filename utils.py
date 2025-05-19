@@ -130,9 +130,9 @@ def gaussian_pdf(x, mean, cov):
 
 def initialize_gmm(X, K, centroids):
     ''' Empieza el GMM con los que ya hice del K means '''
-    N, D = X.shape
+    _, features = X.shape
     means = centroids
-    covs = cp.array([cp.cov(X.T) + cp.eye(D)*1e-6 for _ in range(K)])
+    covs = cp.array([cp.cov(X.T) + cp.eye(features)*1e-6 for _ in range(K)])
     weights = cp.ones(K) / K
     return means, covs, weights
 
