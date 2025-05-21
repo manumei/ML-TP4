@@ -1,2 +1,2 @@
-cupy==12.*
-torch
+def compute_L(X, labels, centroids):
+    return cp.sum(cp.linalg.norm(X - centroids[labels], axis=1)).item()
