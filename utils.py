@@ -2,12 +2,15 @@ import cupy as cp
 import numpy as np
 import time
 from tqdm import trange
+from tqdm import tqdm
 from colorama import Fore, Style
+import matplotlib.pyplot as plt
 
 # para plotear las gaussianas
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 
+# Aux
 def draw_ellipse(mean, cov, ax, color):
     ''' matplotlib magic para dibujar una elipse aparentemente '''
     vals, vecs = np.linalg.eigh(cov)
@@ -39,17 +42,21 @@ def compute_L(X, labels, centroids):
     # mucho texto, numpy magic (o cupy en este caso)
     return cp.sum(cp.linalg.norm(X - centroids[labels], axis=1)).item()
 
-# def compute_gmm_L(X, cluster_assignments, means):
-#     ''' mismo concepto que antes, no hace falta repetir'''
-#     L = 0.0
-#     for k in range(means.shape[0]):
-#         cluster_points = X[cluster_assignments == k]
-#         if cluster_points.shape[0] > 0:
-#             dists = cp.linalg.norm(cluster_points - means[k], axis=1)
-#             L += cp.sum(dists)
-#     return float(L)
+def compute_GM_Loss(X, means, covs, weights):
+    '''Compute the negative log-likelihood loss of the Gaussian Mixture Model'''
+    N = X.shape[0]
+    K = means.shape[0]
 
+    total_log_prob = cp.zeros(N)
 
+    for k in range(K):
+        prob = weights[k] * gaussian_pdf(X, means[k], covs[k])
+        total_log_prob += prob
+
+    log_likelihood = cp.sum(cp.log(total_log_prob + 1e-12))  # avoid log(0)
+    return -log_likelihood
+
+# camins
 def kmeans(X, K, max_iters, rel_tol, abs_tol):
     """K-means clustering on dataset (cupy for GPU)
 
@@ -114,6 +121,7 @@ def kmeans(X, K, max_iters, rel_tol, abs_tol):
 
     return labels, centroids
 
+# GMM
 def gaussian_pdf(x, mean, cov):
     ''' Probability Density Function para Gaussiana '''
     D = x.shape[1]
@@ -176,8 +184,125 @@ def run_gaussian_mixture(X, k, means, covs, weights, max_iters, rtol, atol):
 
     return gamma, means, covs, weights
 
-
 def has_converged(new, old, rtol, atol):
     return cp.allclose(new, old, rtol=rtol, atol=atol)
+
+# DBSCAN
+def get_distance_matrix(X):
+    # Broadcasting (cupy magic)
+    X_norm = cp.sum(X**2, axis=1, keepdims=True)
+    D_squared = X_norm + X_norm.T - 2 * X @ X.T
+    D_squared = cp.maximum(D_squared, 0) # for numerical stability
+    return cp.sqrt(D_squared)
+
+
+def get_neighbors(dist_matrix, idx, eps):
+    ''' Returns los puntos a distancia ε (o menor) del idx'''
+    return cp.where(dist_matrix[idx] <= eps)[0]
+
+def expand_cluster(dist_matrix, labels, idx, initial_neighbors, cluster_id, eps, min_pts):
+    """
+    Expande un cluster desde un nucleo
+    """
+    labels[idx] = cluster_id
+    queue = list(cp.asnumpy(initial_neighbors))  # dynamic list of points to explore
+    visited = set(queue)  # fast lookup for deduplication
+
+    while queue:
+        n_idx = queue.pop()
+        if labels[n_idx] == -1:
+            labels[n_idx] = cluster_id
+        elif labels[n_idx] == 0:
+            labels[n_idx] = cluster_id
+            new_neighbors = get_neighbors(dist_matrix, n_idx, eps)
+            if len(new_neighbors) >= min_pts:
+                for neighbor in cp.asnumpy(new_neighbors):
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+
+def run_dbscan(dist_matrix, eps, min_pts):
+    '''
+    Hace todo el DBscan
+
+    Args:
+        dist_matrix (cp.ndarray): La matriz de distancias de pares (N x N)
+        eps (float): Neighborhood radius (ε)
+        min_pts (int): La K, puntos minimos por cluster
+
+    Returns:
+        cp.ndarray: Las labels (0 = unvisited, -1 = noise, >0 = cluster IDs)
+    '''
+    N = dist_matrix.shape[0]
+    labels = cp.zeros(N, dtype=cp.int32)  # 0 = unvisited
+    cluster_id = 0
+
+    iterator = tqdm(range(N), desc=f"DBSCAN (eps={eps}, k={min_pts})", unit="pt")
+    for idx in iterator:
+        if labels[idx] != 0:
+            continue
+
+        neighbor_idxs = get_neighbors(dist_matrix, idx, eps)
+        if len(neighbor_idxs) < min_pts:
+            labels[idx] = -1
+        else:
+            cluster_id += 1
+            expand_cluster(dist_matrix, labels, idx, neighbor_idxs, cluster_id, eps, min_pts)
+
+    return labels
+
+def run_dbscan_plots(dist_matrix, clust_np, eps_values, min_pts_values, markers):
+    fig, axes = plt.subplots(len(eps_values), len(min_pts_values), figsize=(16, 12))
+
+    for i, eps in enumerate(eps_values):
+        for j, min_pts in enumerate(min_pts_values):
+            labels_cp = run_dbscan(dist_matrix, eps=eps, min_pts=min_pts)
+            labels = cp.asnumpy(labels_cp)
+
+            unique_labels = np.unique(labels)
+            n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+            n_noise = np.sum(labels == -1)
+
+            ax = axes[i, j]
+            colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
+
+            for idx, (k, color) in enumerate(zip(unique_labels, colors)):
+                mask = labels == k
+                label = "Noise" if k == -1 else f"Cluster {k}"
+                marker = 'x' if k == -1 else markers[idx % len(markers)]
+                ax.scatter(clust_np[mask, 0], clust_np[mask, 1],
+                            s=8, color=color, label=label, marker=marker)
+
+            ax.set_title(f"eps={eps}, min_pts={min_pts}\nClusters={n_clusters} | Noise={n_noise}")
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+    plt.tight_layout()
+    plt.show()
+
+
+# Reduccion de Dimensiones
+def pca(X, n_components):
+    ''' PCA con SVD '''
+    X_mean = cp.mean(X, axis=0)
+    X_centered = X - X_mean
+
+    # SVD
+    U, S, Vt = cp.linalg.svd(X_centered, full_matrices=False)
+    components = Vt[:n_components]
+    X_transformed = X_centered @ components.T
+
+    explained_variance = (S**2) / (X.shape[0] - 1)
+    retained_ratio = cp.sum(explained_variance[:n_components]) / cp.sum(explained_variance)
+
+    return X_transformed, components, X_mean, retained_ratio
+
+
+def pca_reconstruct(X_transformed, components, X_mean):
+    return X_transformed @ components + X_mean
+
+def reconstruction_mse(X_original, X_reconstructed):
+    ''' Mean Squared Error entre Reconstruccion y Original '''
+    return cp.mean((X_original - X_reconstructed) ** 2)
 
 
