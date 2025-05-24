@@ -1,5 +1,5 @@
-Cual de mis K-means es mejor? Hago el analisis? Esta bien si digo que elegi la 16, explicando por que con todos los graficos?
-
 En GMM hago L de los means? O likelihood usando las responsabilidades?
 
 Puedo pasarme de las 10 paginas sicon mi apendice?
+
+Puedo en PCA copiar y pegar la funcion de Profile Likelihood del collab linkeado al Murphy directamente? 
