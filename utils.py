@@ -6,6 +6,7 @@ from tqdm import trange
 from tqdm import tqdm
 from colorama import Fore, Style
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 # para plotear las gaussianas
 from matplotlib.patches import Ellipse
