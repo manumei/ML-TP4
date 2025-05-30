@@ -1,6 +1,7 @@
 import cupy as cp
 import numpy as np
 import time
+import random
 from tqdm import trange
 from tqdm import tqdm
 from colorama import Fore, Style
@@ -187,14 +188,13 @@ def run_gaussian_mixture(X, k, means, covs, weights, max_iters, rtol, atol):
 def has_converged(new, old, rtol, atol):
     return cp.allclose(new, old, rtol=rtol, atol=atol)
 
-# DBSCAN
+# DBSCAN, si ya se, tendria que haber hecho una Class, con varios methods, pero bueno, ya esta
 def get_distance_matrix(X):
     # Broadcasting (cupy magic)
     X_norm = cp.sum(X**2, axis=1, keepdims=True)
     D_squared = X_norm + X_norm.T - 2 * X @ X.T
     D_squared = cp.maximum(D_squared, 0) # for numerical stability
     return cp.sqrt(D_squared)
-
 
 def get_neighbors(dist_matrix, idx, eps):
     ''' Returns los puntos a distancia ε (o menor) del idx'''
@@ -251,34 +251,110 @@ def run_dbscan(dist_matrix, eps, min_pts):
 
     return labels
 
+def run_single_db(dist_matrix, clust_np, eps, min_pts, markers, axes, i_axe, j_axe):
+    labels_cp = run_dbscan(dist_matrix, eps=eps, min_pts=min_pts)
+    labels = cp.asnumpy(labels_cp)
+
+    unique_labels = np.unique(labels)
+    n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+    n_noise = np.sum(labels == -1)
+    noise_prct = n_noise / len(labels) * 100
+
+    ax = axes[i_axe, j_axe]
+    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
+
+    # Shuffle colors and markers to avoid repeats
+    cluster_labels = [k for k in unique_labels if k != -1]
+    color_marker_pairs = list(zip(colors, markers * ((len(cluster_labels) // len(markers)) + 1)))
+    random.shuffle(color_marker_pairs)
+
+    color_marker_map = {k: color_marker_pairs[i] for i, k in enumerate(cluster_labels)}
+
+    for k in unique_labels:
+        mask = labels == k
+        if k == -1:
+            # Noise: always black, alpha=0.5, marker 'x'
+            ax.scatter(clust_np[mask, 0], clust_np[mask, 1],
+                        s=8, color='black', alpha=0.5, label="Noise", marker='x')
+        else:
+            color, marker = color_marker_map[k]
+            ax.scatter(clust_np[mask, 0], clust_np[mask, 1],
+                        s=8, color=color, label=f"Cluster {k}", marker=marker)
+            ax.scatter(clust_np[mask, 0], clust_np[mask, 1],
+                        s=8, color=color, label=f"Cluster {k}", marker=marker)
+
+    ax.set_title(f"$\\epsilon$={eps}, k={min_pts}\nCls={n_clusters} | Noise={n_noise} ({noise_prct:.1f}%)")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
 def run_dbscan_plots(dist_matrix, clust_np, eps_values, min_pts_values, markers):
-    fig, axes = plt.subplots(len(eps_values), len(min_pts_values), figsize=(16, 12))
+    fig_height = 3.2 * len(eps_values)
+    fig, axes = plt.subplots(len(eps_values), len(min_pts_values), figsize=(fig_height, 14))
 
     for i, eps in enumerate(eps_values):
         for j, min_pts in enumerate(min_pts_values):
-            labels_cp = run_dbscan(dist_matrix, eps=eps, min_pts=min_pts)
-            labels = cp.asnumpy(labels_cp)
-
-            unique_labels = np.unique(labels)
-            n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-            n_noise = np.sum(labels == -1)
-
-            ax = axes[i, j]
-            colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
-
-            for idx, (k, color) in enumerate(zip(unique_labels, colors)):
-                mask = labels == k
-                label = "Noise" if k == -1 else f"Cluster {k}"
-                marker = 'x' if k == -1 else markers[idx % len(markers)]
-                ax.scatter(clust_np[mask, 0], clust_np[mask, 1],
-                            s=8, color=color, label=label, marker=marker)
-
-            ax.set_title(f"eps={eps}, min_pts={min_pts}\nClusters={n_clusters} | Noise={n_noise}")
-            ax.set_xticks([])
-            ax.set_yticks([])
+            run_single_db(dist_matrix, clust_np, eps, min_pts, markers, axes, i, j)
 
     plt.tight_layout()
     plt.show()
+
+def get_dbscan_matrices(dist_matrix, eps_values, min_pts_values):
+    ''' Calcula matrices de ruido y de cantidad de clusters con diferentes combinaciones '''
+
+    noise_matrix = np.zeros((len(eps_values), len(min_pts_values)), dtype=int)
+    cluster_matrix = np.zeros((len(eps_values), len(min_pts_values)), dtype=int)
+
+    for i, eps in enumerate(eps_values):
+        for j, min_pts in enumerate(min_pts_values):
+            labels_cp = run_dbscan(dist_matrix, eps, min_pts)
+            labels = cp.asnumpy(labels_cp)
+
+            n_noise = np.sum(labels == -1)
+            n_noise = n_noise / len(labels) * 100 # percentage
+            n_clusters = len(np.unique(labels[labels > 0]))  # exclude noise (−1)
+
+            noise_matrix[i, j] = n_noise
+            cluster_matrix[i, j] = n_clusters
+
+    return noise_matrix, cluster_matrix
+
+def plot_dbscan_matrices(noise_matrix, cluster_matrix, eps_values, min_pts_values):
+    ''' las plotea '''
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Show only half the x-ticks
+    xtick_idx = np.arange(len(min_pts_values))
+    xtick_mask = xtick_idx % 2 == 0
+    xticks = xtick_idx[xtick_mask]
+    xticklabels = np.array(min_pts_values)[xtick_mask]
+
+    im1 = axes[0].imshow(noise_matrix, cmap="Reds", aspect="auto")
+    axes[0].set_title("Ruido (% of de puntos totales)")
+    axes[0].set_xticks(xticks)
+    axes[0].set_xticklabels(xticklabels)
+    axes[0].set_yticks(np.arange(len(eps_values)))
+    axes[0].set_yticklabels(eps_values)
+    axes[0].set_xlabel("min_pts")
+    axes[0].set_ylabel("eps")
+    plt.colorbar(im1, ax=axes[0])
+
+    im2 = axes[1].imshow(cluster_matrix, cmap="Blues", aspect="auto")
+    axes[1].set_title("Cantidad de Clusters")
+    axes[1].set_xticks(xticks)
+    axes[1].set_xticklabels(xticklabels)
+    axes[1].set_yticks(np.arange(len(eps_values)))
+    axes[1].set_yticklabels(eps_values)
+    axes[1].set_xlabel("min_pts")
+    axes[1].set_ylabel("eps")
+    plt.colorbar(im2, ax=axes[1])
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
 
 
 # Reduccion de Dimensiones
