@@ -284,13 +284,12 @@ def run_single_db(dist_matrix, clust_np, eps, min_pts, markers, axes, i_axe, j_a
             ax.scatter(clust_np[mask, 0], clust_np[mask, 1],
                         s=8, color=color, label=f"Cluster {k}", marker=marker)
 
-    ax.set_title(f"$\\epsilon$={eps}, k={min_pts}\nCls={n_clusters} | Noise={n_noise} ({noise_prct:.1f}%)")
+    ax.set_title(f"$\\epsilon$={eps}, MinPts={min_pts}\nCls={n_clusters} | Noise={n_noise} ({noise_prct:.1f}%)", fontsize=14)
     ax.set_xticks([])
     ax.set_yticks([])
 
 def run_dbscan_plots(dist_matrix, clust_np, eps_values, min_pts_values, markers):
-    fig_height = 3.2 * len(eps_values)
-    fig, axes = plt.subplots(len(eps_values), len(min_pts_values), figsize=(fig_height, 14))
+    fig, axes = plt.subplots(len(eps_values), len(min_pts_values), figsize=(10, 10))
 
     for i, eps in enumerate(eps_values):
         for j, min_pts in enumerate(min_pts_values):
@@ -323,28 +322,33 @@ def plot_dbscan_matrices(noise_matrix, cluster_matrix, eps_values, min_pts_value
     ''' las plotea '''
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
+    # Reverse the order of eps_values for y-axis
+    eps_values_reversed = eps_values[::-1]
+    noise_matrix_rev = noise_matrix[::-1]
+    cluster_matrix_rev = cluster_matrix[::-1]
+
     # Show only half the x-ticks
     xtick_idx = np.arange(len(min_pts_values))
     xtick_mask = xtick_idx % 2 == 0
     xticks = xtick_idx[xtick_mask]
     xticklabels = np.array(min_pts_values)[xtick_mask]
 
-    im1 = axes[0].imshow(noise_matrix, cmap="Reds", aspect="auto")
-    axes[0].set_title("Ruido (% of de puntos totales)")
+    im1 = axes[0].imshow(noise_matrix_rev, cmap="Reds", aspect="auto")
+    axes[0].set_title("Ruido (% de puntos totales)")
     axes[0].set_xticks(xticks)
     axes[0].set_xticklabels(xticklabels)
     axes[0].set_yticks(np.arange(len(eps_values)))
-    axes[0].set_yticklabels(eps_values)
+    axes[0].set_yticklabels(eps_values_reversed)
     axes[0].set_xlabel("min_pts")
     axes[0].set_ylabel("eps")
     plt.colorbar(im1, ax=axes[0])
 
-    im2 = axes[1].imshow(cluster_matrix, cmap="Blues", aspect="auto")
+    im2 = axes[1].imshow(cluster_matrix_rev, cmap="Blues", aspect="auto")
     axes[1].set_title("Cantidad de Clusters")
     axes[1].set_xticks(xticks)
     axes[1].set_xticklabels(xticklabels)
     axes[1].set_yticks(np.arange(len(eps_values)))
-    axes[1].set_yticklabels(eps_values)
+    axes[1].set_yticklabels(eps_values_reversed)
     axes[1].set_xlabel("min_pts")
     axes[1].set_ylabel("eps")
     plt.colorbar(im2, ax=axes[1])
@@ -423,7 +427,7 @@ def vae_loss(recon_x, x, mu, logvar):
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     return bce + kld
 
-def train_vae(model, train_loader, val_loader, epochs=30, lr=1e-3, device='cpu'):
+def train_vae(model, train_loader, val_loader, epochs=30, lr=1e-3, device='gpu'):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     model.to(device)
 
